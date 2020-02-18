@@ -256,3 +256,367 @@ https://www.cnblogs.com/ysocean/p/9114268.html
   如果Enalbe AOF，好处是在最恶劣情况下也只会丢失不超过两秒数据，启动脚本较简单只load自己的AOF文件就可以了。代价一是带来了持续的IO，二是AOF rewrite的最后将rewrite过程中产生的新数据写到新文件造成的阻塞几乎是不可避免的。只要硬盘许可，应该尽量减少AOF rewrite的频率，AOF重写的基础大小默认值64M太小了，可以设到5G以上。默认超过原大小100%大小时重写可以改到适当的数值。
 
   如果不Enable AOF ，仅靠Master-Slave Replication 实现高可用性也可以。能省掉一大笔IO也减少了rewrite时带来的系统波动。代价是如果Master/Slave同时倒掉，会丢失十几分钟的数据，启动脚本也要比较两个Master/Slave中的RDB文件，载入较新的那个。新浪微博就选用了这种架构
+
+## redis事务
+
+可以一次执行多个命令，本质是一组命令的集合。一个事务中的所有命令都会序列化，按顺序地串行化执行而不会被其它命令插入，不许加塞
+
+![image-20200218191427839](images/image-20200218191427839.png)
+
++ 正常执行
+
+  ![image-20200218192155854](images/image-20200218192155854.png)
+
++ 放弃事务
+
+  ![image-20200218192223747](images/image-20200218192223747.png)
+
++ 全体连坐
+
+  ![image-20200218192235909](images/image-20200218192235909.png)
+
++ 冤头债主
+
+  ![image-20200218192243753](images/image-20200218192243753.png)
+
++ watch监控
+
+  + 悲观锁
+
+    悲观锁(Pessimistic Lock), 顾名思义，就是很悲观，每次去拿数据的时候都认为别人会修改，所以每次在拿数据的时候都会上锁，这样别人想拿这个数据就会block直到它拿到锁。传统的关系型数据库里边就用到了很多这种锁机制，比如行锁，表锁等，读锁，写锁等，都是在做操作之前先上锁
+
+  + 乐观锁
+
+    乐观锁(Optimistic Lock), 顾名思义，就是很乐观，每次去拿数据的时候都认为别人不会修改，所以不会上锁，但是在更新的时候会判断一下在此期间别人有没有去更新这个数据，可以使用版本号等机制。乐观锁适用于多读的应用类型，这样可以提高吞吐量，
+
+    乐观锁策略:提交版本必须大于记录当前版本才能执行更新
+
+  ![image-20200218194749020](images/image-20200218194749020.png)
+
+  ![image-20200218194919225](images/image-20200218194919225.png)
+
+## redis发布订阅
+
+进程间的一种消息通信模式：发送者(pub)发送消息，订阅者(sub)接收消息。
+
+![image-20200218195008112](images/image-20200218195008112.png)
+
+
+
++ 命令
+
+  ![image-20200218195242108](D:\src\Redis\images\image-20200218195242108.png)
+
++ 案例
+
+  先订阅后发布后才能收到消息，
+
+  + 可以一次性订阅多个，SUBSCRIBE c1 c2 c3
+  + 消息发布，PUBLISH c2 hello-redis
+  + 订阅多个，通配符*， PSUBSCRIBE new*
+  + 收取消息， PUBLISH new1 redis2015
+
+## redis复制
+
+行话：也就是我们所说的主从复制，主机数据更新后根据配置和策略，自动同步到备机的master/slaver机制，Master以写为主，Slave以读为主
+
+读写分离、容灾分布
+
+### 配置
+
++ 配从不配主
+
++ 从库配置
+
+  slaveof 主库IP 主库端口
+
+  + 每次与master断开之后，都需要重新连接，除非你配置进redis.conf文件
+  + Info replication
+
++ 修改配置文件细节操作
+
++ 常用3招
+
+![image-20200218201438405](images/image-20200218201438405.png)
+
+![image-20200218201624467](images/image-20200218201624467.png)
+
++ 只能主机写 从机没有写权限
+
++ 主机宕机 从机不会上位 会继续保持 等待主机重连
+
++ 从机宕机 如果没有配置到conf ，需要手动连接。> SLAVEOF ip port
+
++ 薪火相传
+
+  + 上一个Slave可以是下一个slave的Master，Slave同样可以接收其他slaves的连接和同步请求，那么该slave作为了链条中下一个的master,可以有效减轻master的写压力
+  + 中途变更转向:会清除之前的数据，重新建立拷贝最新的
+  + Slaveof 新主库IP 新主库端口
+
++ 反客为主
+
+  > SLAVEOF no one
+
+  使当前数据库停止与其他数据库的同步，转成主数据库
+
+### 复制原理
+
+Slave启动成功连接到master后会发送一个sync命令
+
+Master接到命令启动后台的存盘进程，同时收集所有接收到的用于修改数据集命令，在后台进程执行完毕之后，master将传送整个数据文件到slave,以完成一次完全同步
+
+全量复制：而slave服务在接收到数据库文件数据后，将其存盘并加载到内存中。
+
+增量复制：Master继续将新的所有收集到的修改命令依次传给slave,完成同步
+
+但是只要是重新连接master,一次完全同步（全量复制)将被自动执行
+
+### 哨兵模式
+
+反客为主的自动版，能够后台监控主机是否故障，如果故障了根据投票数自动将从库转换为主库
+
++ 新建文件sentinel.conf文件，名字绝不能错
+
++  sentinel monitor 被监控数据库名字(自己起名字) 127.0.0.1 6379 1
+
++ 上面最后一个数字1，表示主机挂掉后salve投票看让谁接替成为主机，得票数多少后成为主机
+
+  ![image-20200218204010371](images/image-20200218204010371.png)
+
++ 启动哨兵
+
+  + Redis-sentinel /myredis/sentinel.conf 
+  + 上述目录依照各自的实际情况配置，可能目录不同
+
+  ![image-20200218204204294](images/image-20200218204204294.png)
+
++ 原有的master挂了 重新投票选新的master
+
+  ![image-20200218204441680](images/image-20200218204441680.png)
+
++ 原来的master连接后，变成从机
+
+  
+
+### 复制缺点
+
+由于所有的写操作都是先在Master上操作，然后同步更新到Slave上，所以从Master同步到Slave机器有一定的延迟，当系统很繁忙的时候，延迟问题会更加严重，Slave机器数量的增加也会使这个问题更加严重。
+
+
+
+## Java客户端Jedis
+
+### 测试
+
+```java
+public class RedisTest {
+    public static void main(String[] args){
+        Jedis jedis = new Jedis("192.168.52.100",6379);
+        System.out.println(jedis.ping());
+    }
+}
+```
+
+### 事务
+
+```java
+package com.ntuzy.redis;
+
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
+
+/**
+ * @Author IamZY
+ * @create 2020/2/18 21:09
+ */
+public class TXTest {
+
+    public boolean transMethod() {
+        Jedis jedis = new Jedis("127.0.0.1", 6379);
+        int balance;// 可用余额
+        int debt;// 欠额
+        int amtToSubtract = 10;// 实刷额度
+
+        jedis.watch("balance");
+        //jedis.set("balance","5");//此句不该出现，讲课方便。模拟其他程序已经修改了该条目
+        balance = Integer.parseInt(jedis.get("balance"));
+        if (balance < amtToSubtract) {
+            jedis.unwatch();
+            System.out.println("modify");
+            return false;
+        } else {
+            System.out.println("***********transaction");
+            Transaction transaction = jedis.multi();
+            transaction.decrBy("balance", amtToSubtract);
+            transaction.incrBy("debt", amtToSubtract);
+            transaction.exec();
+            balance = Integer.parseInt(jedis.get("balance"));
+            debt = Integer.parseInt(jedis.get("debt"));
+
+            System.out.println("*******" + balance);
+            System.out.println("*******" + debt);
+            return true;
+        }
+    }
+
+    /**
+     * 通俗点讲，watch命令就是标记一个键，如果标记了一个键， 在提交事务前如果该键被别人修改过，那事务就会失败，这种情况通常可以在程序中
+     * 重新再尝试一次。
+     * 首先标记了键balance，然后检查余额是否足够，不足就取消标记，并不做扣减； 足够的话，就启动事务进行更新操作，
+     * 如果在此期间键balance被其它人修改， 那在提交事务（执行exec）时就会报错， 程序中通常可以捕获这类错误再重新执行一次，直到成功。
+     */
+    public static void main(String[] args) {
+//        Jedis jedis = new Jedis("192.168.52.100",6379);
+//        Transaction tx = jedis.multi();
+//        tx.set("k1","v1");
+        //Redis Discard 命令用于取消事务，放弃执行事务块内的所有命令。
+//        tx.exec();
+
+        TXTest test = new TXTest();
+        boolean retValue = test.transMethod();
+        System.out.println("main retValue-------: " + retValue);
+
+    }
+
+}
+```
+
+### 主从复制
+
+```java
+/**
+ * @Author IamZY
+ * @create 2020/2/18 21:21
+ */
+public class TestMS {
+    public static void main(String[] args) throws InterruptedException
+    {
+        Jedis jedis_M = new Jedis("127.0.0.1",6379);
+        Jedis jedis_S = new Jedis("127.0.0.1",6380);
+
+        jedis_S.slaveof("127.0.0.1",6379);
+
+        jedis_M.set("k6","v6");
+        Thread.sleep(500);
+        System.out.println(jedis_S.get("k6"));
+    }
+}
+```
+
+### JedisPool
+
+>
+> JedisPool的配置参数大部分是由JedisPoolConfig的对应项来赋值的。
+>
+> maxActive：控制一个pool可分配多少个jedis实例，通过pool.getResource()来获取；如果赋值为-1，则表示不限制；如果pool已经分配了maxActive个jedis实例，则此时pool的状态为exhausted。
+> maxIdle：控制一个pool最多有多少个状态为idle(空闲)的jedis实例；
+> whenExhaustedAction：表示当pool中的jedis实例都被allocated完时，pool要采取的操作；默认有三种。
+>  WHEN_EXHAUSTED_FAIL --> 表示无jedis实例时，直接抛出NoSuchElementException；
+>  WHEN_EXHAUSTED_BLOCK --> 则表示阻塞住，或者达到maxWait时抛出JedisConnectionException；
+>  WHEN_EXHAUSTED_GROW --> 则表示新建一个jedis实例，也就说设置的maxActive无用；
+> maxWait：表示当borrow一个jedis实例时，最大的等待时间，如果超过等待时间，则直接抛JedisConnectionException；
+> testOnBorrow：获得一个jedis实例的时候是否检查连接可用性（ping()）；如果为true，则得到的jedis实例均是可用的；
+>
+> testOnReturn：return 一个jedis实例给pool时，是否检查连接可用性（ping()）；
+>
+> testWhileIdle：如果为true，表示有一个idle object evitor线程对idle object进行扫描，如果validate失败，此object会被从pool中drop掉；这一项只有在timeBetweenEvictionRunsMillis大于0时才有意义；
+>
+> timeBetweenEvictionRunsMillis：表示idle object evitor两次扫描之间要sleep的毫秒数；
+>
+> numTestsPerEvictionRun：表示idle object evitor每次扫描的最多的对象数；
+>
+> minEvictableIdleTimeMillis：表示一个对象至少停留在idle状态的最短时间，然后才能被idle object evitor扫描并驱逐；这一项只有在timeBetweenEvictionRunsMillis大于0时才有意义；
+>
+> softMinEvictableIdleTimeMillis：在minEvictableIdleTimeMillis基础上，加入了至少minIdle个对象已经在pool里面了。如果为-1，evicted不会根据idle time驱逐任何对象。如果minEvictableIdleTimeMillis>0，则此项设置无意义，且只有在timeBetweenEvictionRunsMillis大于0时才有意义；
+>
+> lifo：borrowObject返回对象时，是采用DEFAULT_LIFO（last in first out，即类似cache的最频繁使用队列），如果为False，则表示FIFO队列；
+>
+> ==================================================================================================================
+> 其中JedisPoolConfig对一些参数的默认设置如下：
+> testWhileIdle=true
+> minEvictableIdleTimeMills=60000
+> timeBetweenEvictionRunsMillis=30000
+> numTestsPerEvictionRun=-1
+
++ JedisPoolUtil
+
+```java
+package com.ntuzy.redis;
+
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
+
+/**
+ * @Author IamZY
+ * @create 2020/2/18 21:24
+ */
+public class JedisPoolUtil {
+
+    private static volatile JedisPool jedisPool = null;//被volatile修饰的变量不会被本地线程缓存，对该变量的读写都是直接操作共享内存。
+
+    private JedisPoolUtil() {
+    }
+
+    public static JedisPool getJedisPoolInstance() {
+        if (null == jedisPool) {
+            synchronized (JedisPoolUtil.class) {
+                if (null == jedisPool) {
+                    JedisPoolConfig poolConfig = new JedisPoolConfig();
+                    poolConfig.setMaxActive(1000);
+                    poolConfig.setMaxIdle(32);
+                    poolConfig.setMaxWait(100 * 1000);
+                    poolConfig.setTestOnBorrow(true);
+
+                    jedisPool = new JedisPool(poolConfig, "192.168.52.100", 6379);
+                }
+            }
+        }
+        return jedisPool;
+    }
+
+    public static void release(JedisPool jedisPool, Jedis jedis) {
+        if (null != jedis) {
+            jedisPool.returnResourceObject(jedis);
+        }
+    }
+}
+```
+
++ TestPool
+
+  ```java
+  package com.ntuzy.redis;
+  
+  import redis.clients.jedis.Jedis;
+  import redis.clients.jedis.JedisPool;
+  
+  /**
+   * @Author IamZY
+   * @create 2020/2/18 21:24
+   */
+  public class TestPool {
+      public static void main(String[] args){
+          JedisPool jedisPool = JedisPoolUtil.getJedisPoolInstance();
+          Jedis jedis = null;
+  
+          try
+          {
+              jedis = jedisPool.getResource();
+              jedis.set("k18","v183");
+  
+          } catch (Exception e) {
+              e.printStackTrace();
+          }finally{
+              JedisPoolUtil.release(jedisPool, jedis);
+          }
+  
+      }
+  }
+  
+  ```
+
+  
+
+
+
