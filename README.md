@@ -305,7 +305,7 @@ https://www.cnblogs.com/ysocean/p/9114268.html
 
 + 命令
 
-  ![image-20200218195242108](D:\src\Redis\images\image-20200218195242108.png)
+  ![image-20200218195242108](images/image-20200218195242108.png)
 
 + 案例
 
